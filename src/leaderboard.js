@@ -1,0 +1,10 @@
+import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
+const LOCAL_KEY='neon-breach-scores',online=/^https:\/\/.+\.supabase\.co$/.test(SUPABASE_URL)&&SUPABASE_ANON_KEY.length>20,client=online?createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
+export const leaderboardMode=online?'online':'local';
+const cleanNickname=value=>String(value||'').trim().replace(/[^\p{L}\p{N}_ -]/gu,'').slice(0,16);
+function localScores(){try{return JSON.parse(localStorage.getItem(LOCAL_KEY)||'[]')}catch{return[]}}
+function saveLocal(score){const scores=localScores(),current=scores.find(row=>row.nickname.toLowerCase()===score.nickname.toLowerCase());if(!current)scores.push(score);else if(score.kills>current.kills||(score.kills===current.kills&&score.wave>current.wave))Object.assign(current,score);localStorage.setItem(LOCAL_KEY,JSON.stringify(scores))}
+export async function submitScore(nickname,kills,wave){const score={nickname:cleanNickname(nickname)||'PILOTO',kills:Math.max(0,Math.floor(kills)),wave:Math.max(1,Math.floor(wave)),updated_at:new Date().toISOString()};saveLocal(score);if(!client)return;const{data:current,error:readError}=await client.from('scores').select('kills,wave').eq('nickname',score.nickname).maybeSingle();if(readError)throw readError;if(!current||score.kills>current.kills||(score.kills===current.kills&&score.wave>current.wave)){const{error}=await client.from('scores').upsert(score,{onConflict:'nickname'});if(error)throw error}}
+export async function getLeaderboard(){if(!client)return localScores().sort((a,b)=>b.kills-a.kills||b.wave-a.wave).slice(0,10);const{data,error}=await client.from('scores').select('nickname,kills,wave,updated_at').order('kills',{ascending:false}).order('wave',{ascending:false}).limit(10);if(error)throw error;return data||[]}
+export function watchLeaderboard(onChange){if(!client)return()=>{};const channel=client.channel('public-ranking').on('postgres_changes',{event:'*',schema:'public',table:'scores'},onChange).subscribe();return()=>client.removeChannel(channel)}
